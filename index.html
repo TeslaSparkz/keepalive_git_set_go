@@ -58,19 +58,22 @@ function setV(cls, head, sub){ $("#v").className = "verdict " + cls; $("#vh").te
 function drawLog(){
   const ul = $("#log"); ul.replaceChildren();
   if (!history.length) return ul.append(el("li", "empty", "No pings yet."));
-  history.forEach(h => { const li = el("li", h.ok ? "ok" : "no"); li.append(el("span", "m", h.ok ? "✓" : "✗"), el("span", null, new Date(h.at).toLocaleTimeString() + " · " + (h.ok ? "HTTP " + h.status : h.error)), el("span", "v", (h.ms / 1000).toFixed(1) + "s")); ul.append(li); });
+  history.forEach(h => { const li = el("li", h.ok ? "ok" : "no"); li.append(el("span", "m", h.ok ? "✓" : "✗"), el("span", null, new Date(h.at).toLocaleTimeString() + " · " + (h.waking ? "waking up" : h.ok ? "HTTP " + h.status : h.error)), el("span", "v", (h.ms / 1000).toFixed(1) + "s")); ul.append(li); });
 }
 async function ping(){
   if (busy) return; busy = true; $("#now").disabled = true;
   setV("busy", "Pinging…", "A cold start can take up to a minute.");
   let j;
-  try { j = await (await fetch("/api/ping", { cache: "no-store" })).json(); }
-  catch { j = { ok: false, error: "Keepalive function unreachable", ms: 0 }; }
+  try {
+    const r = await fetch("/api/ping", { cache: "no-store" }), txt = await r.text();
+    try { j = JSON.parse(txt); } catch { j = { ok: false, error: "Function returned HTTP " + r.status + " (not JSON)", ms: 0 }; }
+  } catch { j = { ok: false, error: "Could not reach /api/ping", ms: 0 }; }
   j.at = j.at || new Date().toISOString();
   history.unshift(j); history.length = Math.min(history.length, 10);
-  if (j.ok) setV("pass", "Awake", (j.host || "Verifier") + " responded in " + (j.ms / 1000).toFixed(1) + "s" + (j.ms > 5000 ? " (it had been asleep)" : "") + ".");
+  if (j.waking) setV("pass", "Waking up", (j.host || "The verifier") + " was asleep and is starting. Checking again in 45s.");
+  else if (j.ok) setV("pass", "Awake", (j.host || "Verifier") + " responded in " + (j.ms / 1000).toFixed(1) + "s" + (j.ms > 5000 ? " (it had been asleep)" : "") + ".");
   else setV("fail", "Problem", j.error || ("HTTP " + j.status));
-  drawLog(); next = Date.now() + EVERY; busy = false; $("#now").disabled = false;
+  drawLog(); next = Date.now() + (j.waking ? 45000 : EVERY); busy = false; $("#now").disabled = false;
 }
 $("#now").onclick = ping;
 setInterval(() => {                         // timestamp-based, so it still fires after browser throttling
