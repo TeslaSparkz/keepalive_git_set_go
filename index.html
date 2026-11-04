@@ -50,6 +50,9 @@ li.ok .m{color:var(--green)}li.no .m{color:var(--red)}li .v{color:var(--dim)}.em
 </main>
 <script>
 const EVERY = 10 * 60 * 1000;              // ping interval
+// Fallback used only if /api/ping is missing (HTTP 404): the page then pings Render directly.
+// Fill in your Render address, e.g. "https://git-set-go.onrender.com"
+const FALLBACK_URL = "https://git-set-go-webapp.onrender.com";
 const $ = s => document.querySelector(s);
 const el = (t, c, x) => { const e = document.createElement(t); if (c) e.className = c; if (x != null) e.textContent = x; return e; };
 let next = 0, busy = false; const history = [];
@@ -58,7 +61,12 @@ function setV(cls, head, sub){ $("#v").className = "verdict " + cls; $("#vh").te
 function drawLog(){
   const ul = $("#log"); ul.replaceChildren();
   if (!history.length) return ul.append(el("li", "empty", "No pings yet."));
-  history.forEach(h => { const li = el("li", h.ok ? "ok" : "no"); li.append(el("span", "m", h.ok ? "✓" : "✗"), el("span", null, new Date(h.at).toLocaleTimeString() + " · " + (h.waking ? "waking up" : h.ok ? "HTTP " + h.status : h.error)), el("span", "v", (h.ms / 1000).toFixed(1) + "s")); ul.append(li); });
+  history.forEach(h => { const li = el("li", h.ok ? "ok" : "no"); li.append(el("span", "m", h.ok ? "✓" : "✗"), el("span", null, new Date(h.at).toLocaleTimeString() + " · " + (h.waking ? "waking up" : h.direct ? "responded (direct)" : h.ok ? "HTTP " + h.status : h.error)), el("span", "v", (h.ms / 1000).toFixed(1) + "s")); ul.append(li); });
+}
+async function direct(){                    // no-cors: response is hidden, but the request still wakes Render
+  const t = Date.now(), host = new URL(FALLBACK_URL).host;
+  try { await fetch(FALLBACK_URL, { mode: "no-cors", cache: "no-store", signal: AbortSignal.timeout(70000) }); return { ok: true, direct: true, ms: Date.now() - t, host }; }
+  catch { return { ok: false, error: "Server unreachable", ms: Date.now() - t, host }; }
 }
 async function ping(){
   if (busy) return; busy = true; $("#now").disabled = true;
@@ -66,12 +74,16 @@ async function ping(){
   let j;
   try {
     const r = await fetch("/api/ping", { cache: "no-store" }), txt = await r.text();
-    try { j = JSON.parse(txt); } catch { j = { ok: false, error: "Function returned HTTP " + r.status + " (not JSON)", ms: 0 }; }
+    try { j = JSON.parse(txt); }
+    catch {
+      if (r.status === 404 && FALLBACK_URL) j = await direct();
+      else j = { ok: false, error: r.status === 404 ? "/api/ping not found (404). Set FALLBACK_URL in index.html or fix the api folder." : "Function returned HTTP " + r.status + " (not JSON)", ms: 0 };
+    }
   } catch { j = { ok: false, error: "Could not reach /api/ping", ms: 0 }; }
   j.at = j.at || new Date().toISOString();
   history.unshift(j); history.length = Math.min(history.length, 10);
   if (j.waking) setV("pass", "Waking up", (j.host || "The verifier") + " was asleep and is starting. Checking again in 45s.");
-  else if (j.ok) setV("pass", "Awake", (j.host || "Verifier") + " responded in " + (j.ms / 1000).toFixed(1) + "s" + (j.ms > 5000 ? " (it had been asleep)" : "") + ".");
+  else if (j.ok) setV("pass", "Awake", (j.host || "Verifier") + (j.direct ? " (direct ping) responded in " : " responded in ") + (j.ms / 1000).toFixed(1) + "s" + (j.ms > 5000 ? " (it had been asleep)" : "") + ".");
   else setV("fail", "Problem", j.error || ("HTTP " + j.status));
   drawLog(); next = Date.now() + (j.waking ? 45000 : EVERY); busy = false; $("#now").disabled = false;
 }
